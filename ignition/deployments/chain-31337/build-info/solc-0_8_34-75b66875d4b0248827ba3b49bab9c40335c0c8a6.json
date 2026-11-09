@@ -1,0 +1,49 @@
+{
+  "_format": "hh3-sol-build-info-1",
+  "id": "solc-0_8_34-75b66875d4b0248827ba3b49bab9c40335c0c8a6",
+  "solcVersion": "0.8.34",
+  "solcLongVersion": "0.8.34+commit.80d5c536",
+  "compilerType": "solc",
+  "toolVersions": {
+    "hardhat": "3.21.2"
+  },
+  "userSourceNameMap": {
+    "contracts/PharmaChain.sol": "project/contracts/PharmaChain.sol"
+  },
+  "input": {
+    "language": "Solidity",
+    "settings": {
+      "evmVersion": "osaka",
+      "optimizer": {
+        "enabled": true,
+        "runs": 200
+      },
+      "outputSelection": {
+        "*": {
+          "": [
+            "ast"
+          ],
+          "*": [
+            "abi",
+            "evm.bytecode.linkReferences",
+            "evm.bytecode.object",
+            "evm.bytecode.opcodes",
+            "evm.bytecode.sourceMap",
+            "evm.deployedBytecode.immutableReferences",
+            "evm.deployedBytecode.linkReferences",
+            "evm.deployedBytecode.object",
+            "evm.deployedBytecode.opcodes",
+            "evm.deployedBytecode.sourceMap",
+            "evm.methodIdentifiers"
+          ]
+        }
+      },
+      "remappings": []
+    },
+    "sources": {
+      "project/contracts/PharmaChain.sol": {
+        "content": "// SPDX-License-Identifier: MIT\r\npragma solidity ^0.8.20;\r\n\r\ncontract PharmaChain {\r\n    enum Status { Active, Compromised }\r\n\r\n    struct Batch {\r\n        string batchId;\r\n        string drugName;\r\n        address manufacturer;\r\n        address currentHolder;\r\n        Status status;\r\n        uint256 registeredAt;\r\n        bool exists;\r\n    }\r\n\r\n    struct CustodyRecord {\r\n        address from;\r\n        address to;\r\n        string location;\r\n        uint256 timestamp;\r\n    }\r\n\r\n    struct TempLog {\r\n        bytes32 dataHash;\r\n        uint256 timestamp;\r\n    }\r\n\r\n    address public owner;\r\n    mapping(address => bool) public authorized;\r\n\r\n    mapping(string => Batch) private batches;\r\n    mapping(string => CustodyRecord[]) private history;\r\n    mapping(string => TempLog[]) private tempLogs;\r\n\r\n    event BatchRegistered(string batchId, string drugName, address indexed manufacturer);\r\n    event CustodyTransferred(string batchId, address indexed from, address indexed to, string location);\r\n    event TempHashAnchored(string batchId, bytes32 dataHash);\r\n    event BatchFlagged(string batchId, string reason, address indexed reporter);\r\n\r\n    modifier onlyOwner() {\r\n        require(msg.sender == owner, \"Not owner\");\r\n        _;\r\n    }\r\n\r\n    modifier onlyAuthorized() {\r\n        require(authorized[msg.sender], \"Not authorized\");\r\n        _;\r\n    }\r\n\r\n    modifier batchExists(string memory batchId) {\r\n        require(batches[batchId].exists, \"Batch not found\");\r\n        _;\r\n    }\r\n\r\n    constructor() {\r\n        owner = msg.sender;\r\n        authorized[msg.sender] = true;\r\n    }\r\n\r\n    // Owner grants or revokes permission (manufacturers, distributors, backend reporter)\r\n    function setAuthorized(address account, bool allowed) external onlyOwner {\r\n        authorized[account] = allowed;\r\n    }\r\n\r\n    function registerBatch(\r\n        string memory batchId,\r\n        string memory drugName,\r\n        string memory location\r\n    ) external onlyAuthorized {\r\n        require(!batches[batchId].exists, \"Batch already registered\");\r\n\r\n        batches[batchId] = Batch(\r\n            batchId,\r\n            drugName,\r\n            msg.sender,\r\n            msg.sender,\r\n            Status.Active,\r\n            block.timestamp,\r\n            true\r\n        );\r\n        history[batchId].push(CustodyRecord(address(0), msg.sender, location, block.timestamp));\r\n\r\n        emit BatchRegistered(batchId, drugName, msg.sender);\r\n    }\r\n\r\n    function transferCustody(\r\n        string memory batchId,\r\n        address newHolder,\r\n        string memory location\r\n    ) external batchExists(batchId) {\r\n        Batch storage b = batches[batchId];\r\n        require(msg.sender == b.currentHolder, \"Only current holder can transfer\");\r\n        require(b.status == Status.Active, \"Batch is not active\");\r\n        require(newHolder != address(0), \"Invalid recipient\");\r\n\r\n        address previous = b.currentHolder;\r\n        b.currentHolder = newHolder;\r\n        history[batchId].push(CustodyRecord(previous, newHolder, location, block.timestamp));\r\n\r\n        emit CustodyTransferred(batchId, previous, newHolder, location);\r\n    }\r\n\r\n    // Stores only the hash of a batch of sensor readings, not the raw data\r\n    function anchorTempHash(\r\n        string memory batchId,\r\n        bytes32 dataHash\r\n    ) external onlyAuthorized batchExists(batchId) {\r\n        tempLogs[batchId].push(TempLog(dataHash, block.timestamp));\r\n        emit TempHashAnchored(batchId, dataHash);\r\n    }\r\n\r\n    // Called by the backend when the ML models detect a breach or a fake\r\n    function flagCompromised(\r\n        string memory batchId,\r\n        string memory reason\r\n    ) external onlyAuthorized batchExists(batchId) {\r\n        Batch storage b = batches[batchId];\r\n        require(b.status == Status.Active, \"Already compromised\");\r\n\r\n        b.status = Status.Compromised;\r\n        emit BatchFlagged(batchId, reason, msg.sender);\r\n    }\r\n\r\n    function getBatch(string memory batchId)\r\n        external view batchExists(batchId) returns (Batch memory)\r\n    {\r\n        return batches[batchId];\r\n    }\r\n\r\n    function getHistory(string memory batchId)\r\n        external view batchExists(batchId) returns (CustodyRecord[] memory)\r\n    {\r\n        return history[batchId];\r\n    }\r\n\r\n    function getTempLogs(string memory batchId)\r\n        external view batchExists(batchId) returns (TempLog[] memory)\r\n    {\r\n        return tempLogs[batchId];\r\n    }\r\n}"
+      }
+    }
+  }
+}
